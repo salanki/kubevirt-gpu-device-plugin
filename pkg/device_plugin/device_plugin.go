@@ -29,12 +29,10 @@
 package device_plugin
 
 import (
-	"bufio"
 	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/golang/glog"
@@ -90,21 +88,17 @@ func createDevicePlugins() {
 	log.Println("GPU vGPU Map ", gpuVgpuMap)
 
 	//Iterate over deivceMap to create device plugin for each type of GPU on the host
-	for k, v := range deviceMap {
-		devs = nil
+	devs = nil
+	for _, v := range deviceMap {
 		for _, dev := range v {
 			devs = append(devs, &pluginapi.Device{
 				ID:     dev,
 				Health: pluginapi.Healthy,
 			})
 		}
-		deviceName := getDeviceName(k)
-		if deviceName == "" {
-			log.Printf("Error: Could not find device name for device id: %s", k)
-			continue
-		}
-		log.Printf("DP Name %s", deviceName)
-		dp := NewGenericDevicePlugin(deviceName, "/sys/kernel/iommu_groups/", devs)
+	}
+	if devs != nil {
+		dp := NewGenericDevicePlugin("gpu", "/sys/kernel/iommu_groups/", devs)
 		err := startDevicePlugin(dp)
 		if err != nil {
 			log.Printf("Error starting %s device plugin: %v", dp.deviceName, err)
@@ -112,27 +106,27 @@ func createDevicePlugins() {
 			devicePlugins = append(devicePlugins, dp)
 		}
 	}
+
 	devs = nil
 	//Iterate over vGpuMap to create device plugin for each type of vGPU on the host
-	for k, v := range vGpuMap {
+	for _, v := range vGpuMap {
 		for _, dev := range v {
 			devs = append(devs, &pluginapi.Device{
 				ID:     dev.addr,
 				Health: pluginapi.Healthy,
 			})
 		}
-		deviceName := getDeviceName(k)
-		if deviceName == "" {
-			deviceName = k
-		}
-		log.Printf("DP Name %s", deviceName)
-		dp := NewGenericVGpuDevicePlugin(deviceName, vGpuBasePath, devs)
+	}
+
+	if devs != nil {
+		dp := NewGenericVGpuDevicePlugin("vgpu", vGpuBasePath, devs)
 		err := startVgpuDevicePlugin(dp)
 		if err != nil {
 			log.Printf("Error starting %s device plugin: %v", dp.deviceName, err)
 		} else {
 			vGpuDevicePlugins = append(vGpuDevicePlugins, dp)
 		}
+
 	}
 
 	<-stop
@@ -292,38 +286,4 @@ func getIommuMap() map[string][]NvidiaGpuDevice {
 
 func getGpuVgpuMap() map[string][]string {
 	return gpuVgpuMap
-}
-
-func getDeviceName(deviceID string) string {
-	deviceName := ""
-	file, err := os.Open(pciIdsFilePath)
-	if err != nil {
-		log.Printf("Error opening pci ids file %s", pciIdsFilePath)
-		return ""
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := scanner.Text()
-		line = strings.TrimSpace(line)
-		if line != "" && strings.Contains(line, deviceID) {
-			splits := strings.Split(line, deviceID)
-			if len(splits) != 2 {
-				log.Printf("Error processing pci.ids file at line: %s", line)
-				return deviceName
-			}
-			deviceName = strings.TrimSpace(splits[1])
-			reg, _ := regexp.Compile("\\s+")
-			deviceName = reg.ReplaceAllString(deviceName, "_") // Replace all spaces with underscore
-			reg, _ = regexp.Compile("[^a-zA-Z0-9_]+")
-			deviceName = reg.ReplaceAllString(deviceName, "") // Removes any char other than alphanumeric and underscore
-			break
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		log.Printf("Error reading pci ids file %s", err)
-	}
-	return deviceName
 }
